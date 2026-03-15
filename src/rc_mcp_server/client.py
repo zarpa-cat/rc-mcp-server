@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC
 
 import httpx
 
 from .models import (
+    ActiveSubscriptionSummary,
     AliasResult,
     BatchEntitlementCheckResult,
     EntitlementCheckResult,
@@ -15,6 +17,7 @@ from .models import (
     Offering,
     OfferingsResponse,
     Subscriber,
+    SubscriptionStatus,
 )
 
 RC_BASE_URL = "https://api.revenuecat.com"
@@ -224,6 +227,62 @@ class RCClient:
             alias=new_app_user_id,
             success=True,
             message=f"Alias '{new_app_user_id}' linked to '{app_user_id}'",
+        )
+
+    # ── Subscription Status ───────────────────────────────────────────────────
+
+    async def get_subscription_status(self, app_user_id: str) -> SubscriptionStatus:
+        """Return an agent-friendly billing summary for a subscriber.
+
+        Collapses entitlements + subscriptions into a flat, decision-ready view:
+        which entitlements are active, which subscriptions have billing issues,
+        which are canceling, and which are in grace period.
+        """
+        sub = await self.get_subscriber(app_user_id)
+        detail = sub.subscriber
+
+        # Active entitlements — those with is_active == True
+        active_entitlements = [
+            k for k, v in detail.entitlements.items() if v.is_active
+        ]
+
+        # Active subscriptions — not expired and not cancelled
+        from datetime import datetime
+
+        now = datetime.now(UTC)
+
+        active_subs: list[ActiveSubscriptionSummary] = []
+        for product_id, s in detail.subscriptions.items():
+            # Active = not expired (or lifetime = no expiry)
+            is_active = s.expires_date is None or s.expires_date > now
+            # Also count grace period subs as "active" in this view
+            in_grace = s.grace_period_expires_date is not None and (
+                s.grace_period_expires_date > now
+            )
+            if is_active or in_grace:
+                active_subs.append(
+                    ActiveSubscriptionSummary(
+                        product_identifier=product_id,
+                        expires_date=s.expires_date,
+                        grace_period_expires_date=s.grace_period_expires_date,
+                        billing_issues_detected_at=s.billing_issues_detected_at,
+                        unsubscribe_detected_at=s.unsubscribe_detected_at,
+                        is_sandbox=s.is_sandbox,
+                    )
+                )
+
+        return SubscriptionStatus(
+            app_user_id=app_user_id,
+            active_entitlements=active_entitlements,
+            active_subscriptions=active_subs,
+            has_any_active=bool(active_entitlements),
+            has_billing_issues=any(s.has_billing_issue for s in active_subs),
+            is_any_canceling=any(s.is_canceling for s in active_subs),
+            is_any_in_grace_period=any(s.is_in_grace_period for s in active_subs),
+            first_seen=detail.first_seen,
+            management_url=detail.management_url,
+            total_subscriptions=len(detail.subscriptions),
+            total_entitlements=len(detail.entitlements),
         )
 
     # ── Batch ─────────────────────────────────────────────────────────────────

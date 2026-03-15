@@ -1,6 +1,6 @@
 """RevenueCat MCP Server.
 
-Exposes RevenueCat REST API as MCP tools for AI agents.
+Exposes RevenueCat REST API as MCP tools, resources, and prompts for AI agents.
 Run via: rc-mcp-server (stdio transport)
 
 Required env vars:
@@ -15,6 +15,14 @@ Usage in Claude Desktop config:
             }
         }
     }
+
+Resources (v0.3.0+):
+    rc://subscriber/{app_user_id}   — full subscriber data
+    rc://offerings/{app_user_id}    — available offerings for a subscriber
+
+Prompts (v0.3.0+):
+    audit_subscriber   — structured billing health analysis
+    retention_check    — churn risk assessment
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ import json
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 import mcp.types as types
 from mcp.server import Server
@@ -259,6 +268,26 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["app_user_ids", "entitlement_identifier"],
             },
         ),
+        types.Tool(
+            name="rc_get_subscription_status",
+            description=(
+                "Get an agent-friendly billing summary for a subscriber. "
+                "Returns: active entitlements (list), active subscriptions with product IDs, "
+                "billing issue flags, cancellation status, grace period status, and management URL. "
+                "Use this instead of rc_get_subscriber when you need a clean decision-ready view — "
+                "e.g. 'is this user in trouble?' or 'what are their active plans?'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_user_id": {
+                        "type": "string",
+                        "description": "The RevenueCat app user ID",
+                    }
+                },
+                "required": ["app_user_id"],
+            },
+        ),
     ]
 
 
@@ -339,6 +368,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 )
                 return _ok(result.model_dump(mode="json"))
 
+            elif name == "rc_get_subscription_status":
+                result = await rc.get_subscription_status(arguments["app_user_id"])
+                return _ok(result.model_dump(mode="json"))
+
             else:
                 return _err(f"Unknown tool: {name}")
 
@@ -347,6 +380,190 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     except Exception as e:
         logger.exception("Unexpected error in tool %s", name)
         return _err(f"Unexpected error: {e}")
+
+
+# ── Resources ────────────────────────────────────────────────────────────────
+# URI scheme: rc://subscriber/{app_user_id}  and  rc://offerings/{app_user_id}
+
+
+@_app.list_resource_templates()
+async def list_resource_templates() -> list[types.ResourceTemplate]:
+    return [
+        types.ResourceTemplate(
+            name="rc-subscriber",
+            uriTemplate="rc://subscriber/{app_user_id}",
+            description=(
+                "Full RevenueCat subscriber record for a given app_user_id. "
+                "Includes entitlements, subscriptions, and custom attributes."
+            ),
+            mimeType="application/json",
+        ),
+        types.ResourceTemplate(
+            name="rc-offerings",
+            uriTemplate="rc://offerings/{app_user_id}",
+            description=(
+                "Available RevenueCat offerings for a given app_user_id, "
+                "including packages, products, and the current offering ID."
+            ),
+            mimeType="application/json",
+        ),
+    ]
+
+
+@_app.list_resources()
+async def list_resources() -> list[types.Resource]:
+    # Dynamic resources require knowing app_user_ids in advance — not applicable here.
+    # Clients should use resource templates and supply their own app_user_ids.
+    return []
+
+
+@_app.read_resource()
+async def read_resource(uri: types.AnyUrl) -> str:
+    """Resolve a resource URI and return its content as a JSON string.
+
+    Supported URI schemes:
+        rc://subscriber/{app_user_id}
+        rc://offerings/{app_user_id}
+    """
+    uri_str = str(uri)
+    parsed = urlparse(uri_str)
+
+    api_key = os.environ.get("REVENUECAT_API_KEY", "")
+    if not api_key:
+        raise ValueError(
+            "REVENUECAT_API_KEY environment variable not set. "
+            "Export it before running rc-mcp-server."
+        )
+
+    # URI path starts with "/" so strip it: /app_user_id → app_user_id
+    app_user_id = parsed.path.lstrip("/")
+    if not app_user_id:
+        raise ValueError(f"No app_user_id in URI: {uri_str}")
+
+    try:
+        async with RCClient(api_key=api_key) as rc:
+            if parsed.scheme == "rc" and parsed.netloc == "subscriber":
+                result = await rc.get_subscriber(app_user_id)
+                return json.dumps(result.model_dump(mode="json"), indent=2, default=str)
+
+            elif parsed.scheme == "rc" and parsed.netloc == "offerings":
+                result = await rc.get_offerings(app_user_id)
+                return json.dumps(result.model_dump(mode="json"), indent=2, default=str)
+
+            else:
+                raise ValueError(
+                    f"Unsupported resource URI: {uri_str}. "
+                    "Expected rc://subscriber/... or rc://offerings/..."
+                )
+    except RCError as e:
+        raise ValueError(str(e)) from e
+
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+
+
+@_app.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    return [
+        types.Prompt(
+            name="audit_subscriber",
+            description=(
+                "Generate a structured billing health audit for a RevenueCat subscriber. "
+                "Checks entitlement status, billing issues, grace period, cancellation signals, "
+                "and outputs a plain-language summary with recommended actions."
+            ),
+            arguments=[
+                types.PromptArgument(
+                    name="app_user_id",
+                    description="The RevenueCat app user ID to audit",
+                    required=True,
+                )
+            ],
+        ),
+        types.Prompt(
+            name="retention_check",
+            description=(
+                "Assess churn risk for a RevenueCat subscriber and recommend retention actions. "
+                "Identifies cancellation intent, billing failures, and expiry windows, then "
+                "suggests targeted interventions (comps, grace extensions, win-back offers)."
+            ),
+            arguments=[
+                types.PromptArgument(
+                    name="app_user_id",
+                    description="The RevenueCat app user ID to assess",
+                    required=True,
+                )
+            ],
+        ),
+    ]
+
+
+@_app.get_prompt()
+async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+    args = arguments or {}
+    app_user_id = args.get("app_user_id", "<app_user_id>")
+
+    if name == "audit_subscriber":
+        return types.GetPromptResult(
+            description=f"Billing health audit for subscriber: {app_user_id}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=(
+                            f"Please audit the billing health of RevenueCat subscriber `{app_user_id}`.\n\n"
+                            "Steps:\n"
+                            f"1. Call `rc_get_subscription_status` with app_user_id=`{app_user_id}`\n"
+                            "2. Check for billing issues (`has_billing_issues`), grace period "
+                            "(`is_any_in_grace_period`), and cancellation intent (`is_any_canceling`).\n"
+                            "3. Summarise the subscriber's billing health in plain language:\n"
+                            "   - What entitlements are active?\n"
+                            "   - Are there any billing problems?\n"
+                            "   - Is the subscriber at risk of churning?\n"
+                            "   - What, if anything, should be done?\n"
+                            "4. End with a risk level: LOW / MEDIUM / HIGH, with one-line rationale."
+                        ),
+                    ),
+                )
+            ],
+        )
+
+    elif name == "retention_check":
+        return types.GetPromptResult(
+            description=f"Churn risk assessment for subscriber: {app_user_id}",
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(
+                        type="text",
+                        text=(
+                            f"Assess churn risk for RevenueCat subscriber `{app_user_id}` "
+                            "and recommend retention actions.\n\n"
+                            "Steps:\n"
+                            f"1. Call `rc_get_subscription_status` with app_user_id=`{app_user_id}`\n"
+                            "2. Check: billing issues, grace period status, cancellation intent, "
+                            "expiry dates on active subscriptions.\n"
+                            "3. Classify the churn risk:\n"
+                            "   - CRITICAL: billing failure + grace period expiring soon\n"
+                            "   - HIGH: unsubscribe detected or billing issues\n"
+                            "   - MEDIUM: subscription expiring within 7 days\n"
+                            "   - LOW: active, no signals\n"
+                            "4. Recommend one concrete retention action:\n"
+                            "   - CRITICAL/HIGH: use `rc_grant_entitlement` to extend access "
+                            "(e.g. monthly comp)\n"
+                            "   - MEDIUM: surface a win-back offer at next session\n"
+                            "   - LOW: no action needed\n"
+                            "5. If a grant is appropriate, output the exact `rc_grant_entitlement` "
+                            "call parameters needed."
+                        ),
+                    ),
+                )
+            ],
+        )
+
+    else:
+        raise ValueError(f"Unknown prompt: {name}")
 
 
 def main() -> None:

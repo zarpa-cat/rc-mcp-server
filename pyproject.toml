@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rc-mcp-server"
-version = "0.2.0"
-description = "RevenueCat MCP server — expose RC APIs as tools for AI agents"
+version = "0.3.0"
+description = "RevenueCat MCP server — expose RC APIs as tools, resources, and prompts for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

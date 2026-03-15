@@ -92,3 +92,51 @@ class BatchEntitlementCheckResult(BaseModel):
     active: int
     inactive: int
     results: list[EntitlementCheckResult]
+
+
+class ActiveSubscriptionSummary(BaseModel):
+    """Summary of a single active subscription."""
+
+    product_identifier: str
+    expires_date: datetime | None = None
+    grace_period_expires_date: datetime | None = None
+    billing_issues_detected_at: datetime | None = None
+    unsubscribe_detected_at: datetime | None = None
+    is_sandbox: bool = False
+
+    @property
+    def has_billing_issue(self) -> bool:
+        return self.billing_issues_detected_at is not None
+
+    @property
+    def is_canceling(self) -> bool:
+        return self.unsubscribe_detected_at is not None
+
+    @property
+    def is_in_grace_period(self) -> bool:
+        if self.grace_period_expires_date is None:
+            return False
+        return self.grace_period_expires_date > datetime.now(
+            self.grace_period_expires_date.tzinfo
+        )
+
+
+class SubscriptionStatus(BaseModel):
+    """Agent-friendly billing summary for a subscriber."""
+
+    app_user_id: str
+    # Entitlement-level view
+    active_entitlements: list[str]
+    # Subscription-level view
+    active_subscriptions: list[ActiveSubscriptionSummary]
+    # Flags
+    has_any_active: bool
+    has_billing_issues: bool
+    is_any_canceling: bool
+    is_any_in_grace_period: bool
+    # Metadata
+    first_seen: datetime | None = None
+    management_url: str | None = None
+    # Totals
+    total_subscriptions: int
+    total_entitlements: int
