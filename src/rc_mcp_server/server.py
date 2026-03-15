@@ -197,6 +197,68 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["app_user_id", "confirm"],
             },
         ),
+        types.Tool(
+            name="rc_get_attributes",
+            description=(
+                "Fetch subscriber attributes (custom key/value metadata) as a clean dict. "
+                "Use this to read current attribute values before updating them."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_user_id": {
+                        "type": "string",
+                        "description": "The RevenueCat app user ID",
+                    }
+                },
+                "required": ["app_user_id"],
+            },
+        ),
+        types.Tool(
+            name="rc_create_alias",
+            description=(
+                "Create an alias linking a new app user ID to an existing subscriber. "
+                "Use for account linking: e.g. link an anonymous ID to an identified user "
+                "after sign-in so their purchase history merges."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_user_id": {
+                        "type": "string",
+                        "description": "The existing RevenueCat app user ID",
+                    },
+                    "new_app_user_id": {
+                        "type": "string",
+                        "description": "The new user ID to link as an alias",
+                    },
+                },
+                "required": ["app_user_id", "new_app_user_id"],
+            },
+        ),
+        types.Tool(
+            name="rc_batch_check_entitlements",
+            description=(
+                "Check an entitlement for multiple subscribers in parallel. "
+                "Returns an aggregate summary (total/active/inactive) plus per-user results. "
+                "Useful for cohort analysis, bulk gating decisions, or churn monitoring."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_user_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of RevenueCat app user IDs to check",
+                    },
+                    "entitlement_identifier": {
+                        "type": "string",
+                        "description": "The entitlement to check for all users",
+                    },
+                },
+                "required": ["app_user_ids", "entitlement_identifier"],
+            },
+        ),
     ]
 
 
@@ -256,6 +318,26 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     )
                 result = await rc.delete_subscriber(arguments["app_user_id"])
                 return _ok(result)
+
+            elif name == "rc_get_attributes":
+                result = await rc.get_attributes(arguments["app_user_id"])
+                return _ok(
+                    {"app_user_id": arguments["app_user_id"], "attributes": result}
+                )
+
+            elif name == "rc_create_alias":
+                result = await rc.create_alias(
+                    arguments["app_user_id"],
+                    arguments["new_app_user_id"],
+                )
+                return _ok(result.model_dump(mode="json"))
+
+            elif name == "rc_batch_check_entitlements":
+                result = await rc.batch_check_entitlements(
+                    arguments["app_user_ids"],
+                    arguments["entitlement_identifier"],
+                )
+                return _ok(result.model_dump(mode="json"))
 
             else:
                 return _err(f"Unknown tool: {name}")

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import httpx
 
 from .models import (
+    AliasResult,
+    BatchEntitlementCheckResult,
     EntitlementCheckResult,
     EntitlementGrantResult,
     Offering,
@@ -189,3 +192,72 @@ class RCClient:
         )
         self._raise_for_status(r)
         return {"success": True, "app_user_id": app_user_id, "attributes": attributes}
+
+    async def get_attributes(self, app_user_id: str) -> dict[str, str | None]:
+        """Fetch subscriber attributes (key/value pairs).
+
+        Returns a clean dict of {key: value}. value may be None if unset.
+        """
+        sub = await self.get_subscriber(app_user_id)
+        raw: dict = getattr(sub.subscriber, "subscriber_attributes", {}) or {}
+        # RC returns {"key": {"value": "...", "updated_at_ms": ...}}
+        return {k: v.get("value") if isinstance(v, dict) else v for k, v in raw.items()}
+
+    # ── Aliases ───────────────────────────────────────────────────────────────
+
+    async def create_alias(
+        self,
+        app_user_id: str,
+        new_app_user_id: str,
+    ) -> AliasResult:
+        """Create an alias linking new_app_user_id to the existing subscriber.
+
+        Useful for account linking: associate an anonymous ID with an identified user.
+        """
+        r = await self._client.post(
+            f"/v1/subscribers/{app_user_id}/aliases",
+            json={"new_app_user_id": new_app_user_id},
+        )
+        self._raise_for_status(r)
+        return AliasResult(
+            app_user_id=app_user_id,
+            alias=new_app_user_id,
+            success=True,
+            message=f"Alias '{new_app_user_id}' linked to '{app_user_id}'",
+        )
+
+    # ── Batch ─────────────────────────────────────────────────────────────────
+
+    async def batch_check_entitlements(
+        self,
+        app_user_ids: list[str],
+        entitlement_identifier: str,
+        max_concurrency: int = 5,
+    ) -> BatchEntitlementCheckResult:
+        """Check an entitlement for multiple subscribers in parallel.
+
+        Returns an aggregate summary plus per-subscriber results.
+        max_concurrency limits parallel RC API calls.
+        """
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _check(uid: str) -> EntitlementCheckResult:
+            async with semaphore:
+                try:
+                    return await self.check_entitlement(uid, entitlement_identifier)
+                except RCError:
+                    return EntitlementCheckResult(
+                        app_user_id=uid,
+                        entitlement_identifier=entitlement_identifier,
+                        is_active=False,
+                    )
+
+        results = await asyncio.gather(*[_check(uid) for uid in app_user_ids])
+        active = sum(1 for r in results if r.is_active)
+        return BatchEntitlementCheckResult(
+            entitlement_identifier=entitlement_identifier,
+            total=len(results),
+            active=active,
+            inactive=len(results) - active,
+            results=list(results),
+        )

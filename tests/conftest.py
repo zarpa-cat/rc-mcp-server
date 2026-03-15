@@ -36,6 +36,10 @@ def sample_subscriber_payload() -> dict:
                     "grace_period_expires_date": None,
                 }
             },
+            "subscriber_attributes": {
+                "cohort": {"value": "beta", "updated_at_ms": 1741924800000},
+                "source": {"value": "web", "updated_at_ms": 1741924800000},
+            },
         },
     }
 

@@ -17,6 +17,9 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that ex
 | `rc_get_offerings` | Fetch available offerings and packages |
 | `rc_set_attributes` | Set subscriber attributes (custom metadata) |
 | `rc_delete_subscriber` | Delete a subscriber (GDPR/CCPA, requires `confirm: true`) |
+| `rc_get_attributes` | Fetch subscriber attributes as a clean key/value dict |
+| `rc_create_alias` | Link a new app user ID to an existing subscriber (account linking) |
+| `rc_batch_check_entitlements` | Check an entitlement for multiple subscribers in parallel; returns summary + per-user results |
 
 ---
 

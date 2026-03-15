@@ -48,6 +48,7 @@ class SubscriberDetail(BaseModel):
     original_purchase_date: datetime | None = None
     other_purchases: dict[str, Any] = Field(default_factory=dict)
     subscriptions: dict[str, Subscription] = Field(default_factory=dict)
+    subscriber_attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class Offering(BaseModel):
@@ -76,3 +77,18 @@ class EntitlementCheckResult(BaseModel):
     expires_date: datetime | None = None
     grace_period_expires_date: datetime | None = None
     product_identifier: str | None = None
+
+
+class AliasResult(BaseModel):
+    app_user_id: str
+    alias: str
+    success: bool
+    message: str
+
+
+class BatchEntitlementCheckResult(BaseModel):
+    entitlement_identifier: str
+    total: int
+    active: int
+    inactive: int
+    results: list[EntitlementCheckResult]
