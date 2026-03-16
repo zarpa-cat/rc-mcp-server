@@ -39,6 +39,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from .client import RCClient, RCError
+from .event_queue import EventQueue
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +289,93 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["app_user_id"],
             },
         ),
+        types.Tool(
+            name="rc_get_recent_events",
+            description=(
+                "Query the local RevenueCat webhook event queue for recent billing events. "
+                "Requires rc-mcp-webhook to be running and receiving events from RevenueCat. "
+                "Returns events in reverse chronological order. Filter by subscriber, "
+                "event type, or time window. "
+                "Event types: INITIAL_PURCHASE, RENEWAL, CANCELLATION, BILLING_ISSUE, "
+                "EXPIRATION, PRODUCT_CHANGE, UNCANCELLATION, SUBSCRIPTION_PAUSED, TRANSFER, TEST."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "app_user_id": {
+                        "type": "string",
+                        "description": "Filter to a specific subscriber (omit for all users)",
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "description": (
+                            "Filter to a specific event type, e.g. 'BILLING_ISSUE' or 'CANCELLATION' "
+                            "(omit for all types)"
+                        ),
+                    },
+                    "since_hours": {
+                        "type": "number",
+                        "description": "Only return events received in the last N hours (default: 24)",
+                        "default": 24,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum events to return (default: 20, max: 100)",
+                        "default": 20,
+                    },
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="rc_queue_status",
+            description=(
+                "Show statistics for the local RevenueCat webhook event queue. "
+                "Returns: total stored events, count by event type, DB path, and age of "
+                "oldest/newest events. Use to confirm the webhook receiver is working and "
+                "events are flowing."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
     ]
 
 
 @_app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    # ── Event queue tools (no RC API call needed) ────────────────────────────
+    if name == "rc_get_recent_events":
+        try:
+            queue = EventQueue()
+            limit = min(int(arguments.get("limit", 20)), 100)
+            since_hours = float(arguments.get("since_hours", 24))
+            events = queue.query_events(
+                app_user_id=arguments.get("app_user_id"),
+                event_type=arguments.get("event_type"),
+                since_hours=since_hours,
+                limit=limit,
+            )
+            return _ok(
+                {
+                    "count": len(events),
+                    "since_hours": since_hours,
+                    "events": [e.to_dict() for e in events],
+                }
+            )
+        except Exception as e:
+            return _err(f"Event queue error: {e}")
+
+    if name == "rc_queue_status":
+        try:
+            queue = EventQueue()
+            return _ok(queue.get_stats())
+        except Exception as e:
+            return _err(f"Event queue error: {e}")
+
+    # ── RC API tools ──────────────────────────────────────────────────────────
     api_key = os.environ.get("REVENUECAT_API_KEY", "")
     if not api_key:
         return _err(
@@ -374,6 +457,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
             else:
                 return _err(f"Unknown tool: {name}")
+
+    except RCError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("Unexpected error in tool %s", name)
+        return _err(f"Unexpected error: {e}")
 
     except RCError as e:
         return _err(str(e))
