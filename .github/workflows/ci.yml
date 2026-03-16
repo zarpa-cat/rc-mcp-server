@@ -25,7 +25,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --dev --extra webhook
 
       - name: Lint (ruff check)
         run: uv run ruff check .
