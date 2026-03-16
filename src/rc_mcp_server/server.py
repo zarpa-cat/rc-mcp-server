@@ -499,7 +499,9 @@ async def list_prompts() -> list[types.Prompt]:
 
 
 @_app.get_prompt()
-async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+async def get_prompt(
+    name: str, arguments: dict[str, str] | None
+) -> types.GetPromptResult:
     args = arguments or {}
     app_user_id = args.get("app_user_id", "<app_user_id>")
 

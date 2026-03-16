@@ -242,9 +242,7 @@ class RCClient:
         detail = sub.subscriber
 
         # Active entitlements — those with is_active == True
-        active_entitlements = [
-            k for k, v in detail.entitlements.items() if v.is_active
-        ]
+        active_entitlements = [k for k, v in detail.entitlements.items() if v.is_active]
 
         # Active subscriptions — not expired and not cancelled
         from datetime import datetime

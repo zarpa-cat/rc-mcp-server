@@ -141,10 +141,9 @@ async def test_subscription_status_tool(sample_subscriber_payload):
 async def test_subscription_status_tool_no_api_key():
     with patch.dict("os.environ", {}, clear=True):
         import os
+
         os.environ.pop("REVENUECAT_API_KEY", None)
-        result = await call_tool(
-            "rc_get_subscription_status", {"app_user_id": "user"}
-        )
+        result = await call_tool("rc_get_subscription_status", {"app_user_id": "user"})
     assert "REVENUECAT_API_KEY" in result[0].text
 
 
@@ -191,6 +190,7 @@ async def test_read_subscriber_resource(sample_subscriber_payload):
             result = await read_resource("rc://subscriber/test_user_123")  # type: ignore[arg-type]
 
     import json
+
     data = json.loads(result)
     assert "subscriber" in data
 
@@ -220,6 +220,7 @@ async def test_read_offerings_resource(sample_offerings_payload):
             result = await read_resource("rc://offerings/test_user_123")  # type: ignore[arg-type]
 
     import json
+
     data = json.loads(result)
     assert "current_offering_id" in data
     assert data["current_offering_id"] == "default"
@@ -229,6 +230,7 @@ async def test_read_offerings_resource(sample_offerings_payload):
 async def test_read_resource_no_api_key():
     with patch.dict("os.environ", {}, clear=True):
         import os
+
         os.environ.pop("REVENUECAT_API_KEY", None)
         with pytest.raises(ValueError, match="REVENUECAT_API_KEY"):
             await read_resource("rc://subscriber/user123")  # type: ignore[arg-type]
@@ -273,7 +275,7 @@ async def test_list_prompts_have_arguments():
 async def test_list_prompts_app_user_id_required():
     prompts = await list_prompts()
     for p in prompts:
-        for arg in (p.arguments or []):
+        for arg in p.arguments or []:
             if arg.name == "app_user_id":
                 assert arg.required is True
 
